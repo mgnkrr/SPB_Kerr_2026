@@ -1,4 +1,4 @@
-function [HF_interp, Gmin, Gdif] = processGHF(HF_input, Ts, Mb, H)
+function [HF_interp, Gmin, Gdiff, Gmin_adv, Gdiff_adv, Delta_q_adv] = processGHF(HF_input, Ts, Mb, H)
 
     T0 = 273.15;
     Cp = 2009; % heat capacity of ice
@@ -28,6 +28,14 @@ function [HF_interp, Gmin, Gdif] = processGHF(HF_input, Ts, Mb, H)
     Gmin = Gmin / secperyear * 1000;
 
     HF_interp = HF_input;  % in case it’s already interpolated
-    Gdif = HF_interp - Gmin;
+    Gdiff = HF_interp - Gmin;
+
+    % add advection term
+    load('datasets/longitudinal_advection_maps.mat','Delta_q_adv')
+    
+    Gmin_adv = Gmin - Delta_q_adv;
+
+    Gdiff_adv = HF_interp - Gmin_adv;
+
 end
 

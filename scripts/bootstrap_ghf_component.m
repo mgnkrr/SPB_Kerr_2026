@@ -1,11 +1,11 @@
 %% ================================================================
-%  GHF model evaluation  — with comprehensive diagnostics
+%  GHF model evaluation 
 %  ================================================================
 function S = bootstrap_ghf_component(cfg_override)
 check_dependencies(struct('autoInstall',true,'needAMT',false,'verbose',true));
-addpath('datasets_for_gmin');
+addpath('datasets');
 dbstop if error
-run_id = char(datetime('now','Format','yyyyMMdd_HHmmss'));  % seconds as 'ss'
+run_id = char(datetime('now','Format','yyyyMMdd_HHmmss'));  
 
 %% -------------------- CONFIG --------------------
 cfg = struct( ...
@@ -21,7 +21,7 @@ cfg = struct( ...
   'sweep_mode',         true ...
 );
 
-cfg.save_artifacts = false;
+cfg.save_artifacts = true;
 cfg.artifact_dir   = fullfile(cfg.outdir,'artifacts');
 if ~exist(cfg.artifact_dir,'dir'), mkdir(cfg.artifact_dir); end
 
@@ -35,13 +35,12 @@ cfg.region = struct( ...
   'cache',         true ...
 );
 
-% Sinks (used to define ROI; WITH connectivity grouping)
+% Sinks
 cfg.sinks = struct('marker','.', 'size',4, 'color',[0.05 0.05 0.05], 'alpha',0.85);
 
 cfg.skip_static_build = true;
 
 % ---------------- Uncertainty — analytic expectation + sink bootstrap -----
-% Your original fields kept; new ones added & *wired up* below.
 cfg.uncertainty = struct( ...
   'mode','analytic', ...
   'bootstrap_mode','component', ...    % 'pixel' | 'component'
@@ -52,7 +51,6 @@ cfg.uncertainty = struct( ...
   'band_inner',0.50, ...
   'noise_enable',false, ...
   'noise_K',1, ...
-  ... % NEW (defaults preserve current behavior)
   'pred_mode','bernoulli', ...     % 'bernoulli' | 'noisy_threshold'
   'class_balance',false, ...       % pixel bootstrap: stratified by class
   'pps_components',false ...       % component bootstrap: PPS by component size
@@ -75,12 +73,12 @@ if exist(datafile,'file')
 else
     warning('Data file not found. Building now...');
     S = build_data_core('to_single',true,'save',true, ...
-                    'outdir','datasets_for_gmin','outfile','gmin_data.mat');
-    S = add_g_fields(fullfile('datasets_for_gmin','gmin_data.mat'), ...
-                 'advection_file','datasets_for_gmin/longitudinal_advection_maps.mat', ...
+                    'outdir','datasets','outfile','gmin_data.mat');
+    S = add_g_fields(fullfile('datasets','gmin_data.mat'), ...
+                 'advection_file','datasets/longitudinal_advection_maps.mat', ...
                  'advection_var','Delta_q_adv', 'advection_units','mWm2', ...
-                 'save',true, 'outfile', fullfile('datasets_for_gmin','gmin_data.mat'));
-    S = add_g_uncertainty('datasets_for_gmin/gmin_data.mat', ...
+                 'save',true, 'outfile', fullfile('datasets','gmin_data.mat'));
+    S = add_g_uncertainty('datasets/gmin_data.mat', ...
                 'sigma_Ts',1.5,'sigma_Mb',0.02,'sigma_H',50, ...
                 'delta_Ts',0.5,'delta_Mb',0.01,'delta_H',5, ...
                 'cache_dir','', 'use_cache',true, 'save',true,'outfile','');
@@ -134,17 +132,17 @@ end
 valid_mask = isfinite(S.Q) & ~S.spec_invalid & isfinite(S.H) & isfinite(S.icevel);
 slow_mask  = valid_mask & ~(S.icevel > cfg.v_keep);
 
-S.roi_mask = slow_mask & REG_MASK & S.sink_mask_comp;   % strict ROI
-S.viz_mask = slow_mask & REG_MASK;                      % looser, for maps
+S.roi_mask = slow_mask & REG_MASK & S.sink_mask_comp;   
+S.viz_mask = slow_mask & REG_MASK;                      
 
 % ROI-vector indexing
 idx = find(S.roi_mask);
 S.eval_mask_full = S.roi_mask;          
 S.eval_mask      = true(numel(idx),1);  
 
-% -- MEDIAN domain (no sinks), excludes Q==9999 by construction via valid_mask
+% -- MEDIAN domain 
 if isfield(S,'viz_mask') && ~isempty(S.viz_mask)
-    med_mask = S.viz_mask;                      % = slow_mask & REG_MASK & valid_mask (Q finite & ~=9999)
+    med_mask = S.viz_mask;                      
 else
     % Fallback if viz_mask wasn't built for some reason:
     valid_mask = isfinite(S.Q) & (S.Q ~= 9999) & isfinite(S.H) & isfinite(S.icevel);
@@ -153,7 +151,7 @@ else
 end
 idx_med = find(med_mask);
 
-% Truth labels
+% 'Truth' labels
 spec_roi  = S.Q(idx);
 spec_ok   = isfinite(spec_roi) & (spec_roi ~= 9999) & (spec_roi > cfg.spec_thresh);
 
@@ -235,11 +233,10 @@ end
 fprintf('--------------------------------------\n\n');
 
 %% ----------------- Per-model center values & GΔ cache -------------------
-
 % reuse idx = find(S.roi_mask);
 idx = find(S.roi_mask);
 
-% Update model center values now that ROI exists (STRICT median over valid spec)
+% Update model center values
 nM = numel(S.names);
 validNames = cellfun(@(c) matlab.lang.makeValidName(c), S.names, 'uni', 0);
 if ~isfield(S,'model_cvals'),        S.model_cvals = nan(nM,1);        end
@@ -254,7 +251,7 @@ for i = 1:nM
         S.model_cvals_median(i) = v;          % flats get their scalar
         S.model_cvals(i)        = v;          % keep legacy field in sync
     else
-        S.model_cvals_median(i) = median(Mi(idx_med), 'omitnan');  % <- NO SINKS
+        S.model_cvals_median(i) = median(Mi(idx_med), 'omitnan');  
         S.model_cvals(i)        = S.model_cvals_median(i);
     end
 end
@@ -268,7 +265,7 @@ for i = 1:nM
     gdif_cache{i} = gi(idx);
 end
 
-% ---- NEW: regional-class masks for ISPB-wet / OSPB-dry metric ----
+% ---- regional-class masks ----
 mask_ISPB_vec = false(numel(idx),1);
 mask_OSPB_vec = false(numel(idx),1);
 
@@ -282,14 +279,14 @@ end
 wet_vec = logical(S.y_raw_vec(:));   % truth: wet = 1, dry = 0
 dry_vec = ~wet_vec;
 
-% Restrict to eval_mask so this matches other metrics
+% Restrict to eval_mask
 mask_wet_ISPB = S.eval_mask & mask_ISPB_vec & wet_vec;
 mask_dry_OSPB = S.eval_mask & mask_OSPB_vec & dry_vec;
 
 N_wet_ISPB = nnz(mask_wet_ISPB);
 N_dry_OSPB = nnz(mask_dry_OSPB);
 
-% Optional: stash for debugging
+% Stash
 S.mask_wet_ISPB_vec = mask_wet_ISPB;
 S.mask_dry_OSPB_vec = mask_dry_OSPB;
 S.N_wet_ISPB = N_wet_ISPB;
@@ -305,7 +302,7 @@ S.margin_used = nan(nM,1);
 RAW_SPEC = nan(nM,1); RAW_REC = nan(nM,1); RAW_PREC = nan(nM,1);
 RAW_ACC  = nan(nM,1); RAW_F1  = nan(nM,1); RAW_G = sqrt(max(RAW_SPEC,0) .* max(RAW_REC,0));
 
-% NEW: regional-recall metric storage
+% regional-recall metric storage
 REC_ISPB_wet      = nan(nM,1,'double');   % recall of wet in ISPB
 REC_OSPB_dry      = nan(nM,1,'double');   % recall of dry in OSPB
 G_ISPBwet_OSPBdry = nan(nM,1,'double');   % geometric mean of the two
@@ -328,20 +325,19 @@ for i = 1:nM
   ACC(i)=m_raw.ACC; PR_r(i)=m_raw.PREC; RC(i)=m_raw.REC; F1(i)=m_raw.F1; 
   TPFP(i)=m_raw.TP_FP; TNFN(i)=m_raw.TN_FN;
 
-  % ---- NEW: ISPB-wet / OSPB-dry metric ----
-  % Reconstruct full ROI-length predictions from the eval-mask subset
+  % ---- ISPB-wet / OSPB-dry metric ----
   pred_full = false(numel(idx),1);
   pred_full(Mv) = prd;
 
   if N_wet_ISPB > 0
-      TP_wet_ISPB = sum(pred_full(mask_wet_ISPB));      % predicted wet where truth is wet in ISPB
+      TP_wet_ISPB = sum(pred_full(mask_wet_ISPB));      
       REC_ISPB_wet(i) = TP_wet_ISPB / max(N_wet_ISPB, eps);
   else
       REC_ISPB_wet(i) = NaN;
   end
 
   if N_dry_OSPB > 0
-      TN_dry_OSPB = sum(~pred_full(mask_dry_OSPB));     % predicted dry where truth is dry in OSPB
+      TN_dry_OSPB = sum(~pred_full(mask_dry_OSPB));     
       REC_OSPB_dry(i) = TN_dry_OSPB / max(N_dry_OSPB, eps);
   else
       REC_OSPB_dry(i) = NaN;
@@ -361,16 +357,16 @@ S.results_table = table( ...
   TP, FP, TN, FN, ...
   ACC, PR_r, RC, F1, ...
   RAW_G, ...                               % overall G = sqrt(REC*SPEC)
-  REC_ISPB_wet, REC_OSPB_dry, G_ISPBwet_OSPBdry, ...  % NEW columns
+  REC_ISPB_wet, REC_OSPB_dry, G_ISPBwet_OSPBdry, ...  
   TPFP, TNFN, ...
   'VariableNames', {'Model','N_roi', ...
   'TP_raw','FP_raw','TN_raw','FN_raw', ...
   'ACC_raw','PREC_raw','REC_raw','F1_raw', ...
   'G_raw', ...                                      % overall G
-  'REC_ISPB_wet_raw','REC_OSPB_dry_raw','G_ISPBwet_OSPBdry_raw', ... % new metric names
+  'REC_ISPB_wet_raw','REC_OSPB_dry_raw','G_ISPBwet_OSPBdry_raw', ... 
   'TP_FP_raw','TN_FN_raw'});
 
-% Also stash arrays for convenience
+% stash
 S.REC_ISPB_wet      = REC_ISPB_wet;
 S.REC_OSPB_dry      = REC_OSPB_dry;
 S.G_ISPBwet_OSPBdry = G_ISPBwet_OSPBdry;
@@ -381,22 +377,21 @@ writetable(S.results_table, out_csv);
 fprintf('Saved results table: %s\n', out_csv);
 
 %% ---- EXPECTED METRICS + (PIXEL/COMPONENT) BOOTSTRAP ----------------------
-
 fprintf('Analytic expected metrics with %s bootstrap (probabilistic)...\n', cfg.uncertainty.bootstrap_mode);
 
 stat_list = {'SPEC','REC','PREC','ACC','F1'};
 
 % Build once: ROI indexing and Gmin σ within ROI-vector M-space
-M        = S.eval_mask;                 % logical over ROI-vector
-y_raw_M  = double(S.y_raw_full(idx));   % now 'idx' exists
+M        = S.eval_mask;                 
+y_raw_M  = double(S.y_raw_full(idx));   
 y_raw_M  = y_raw_M(M);
 NM       = nnz(M);
 
-% regional masks in M-space (for analytic + bootstrap)
+% regional masks in M-space 
 mask_wet_ISPB_M = S.mask_wet_ISPB_vec(M);
 mask_dry_OSPB_M = S.mask_dry_OSPB_vec(M);
 
-% σ(Gmin) per pixel in ROI-vector (0 if missing)
+% σ(Gmin) per pixel in ROI-vector 
 if isfield(S,'sigma_gmin') && ~isempty(S.sigma_gmin) && isequal(size(S.sigma_gmin), size(S.H))
     sigG_M_full = S.sigma_gmin(idx);
     sigG_M      = sigG_M_full(M);
@@ -435,7 +430,7 @@ for i = 1:nM
         S.sigma_gdif_median(i) = median(sigma_gdel_vec, 'omitnan');
         scalar_sigma_per_model(i) = mean(sigM_roi, 'omitnan');
     else
-        % No per-pixel map — conservative scalar σ(model)
+        % No per-pixel map —> scalar σ(model)
         guess = NaN;
         if isfield(S,'sigma_model_scalar') && numel(S.sigma_model_scalar)>=i
             guess = S.sigma_model_scalar(i);
@@ -463,7 +458,7 @@ EXP_raw.G = nan(nM,1);
 CI_raw.G  = nan(nM,2);
 CIi_raw.G = nan(nM,2);
 
-% NEW: analytic + CI holders for regional metric
+% regional metrics
 EXP_raw.REC_ISPB_wet      = nan(nM,1);
 EXP_raw.REC_OSPB_dry      = nan(nM,1);
 EXP_raw.G_ISPBwet_OSPBdry = nan(nM,1);
@@ -501,7 +496,6 @@ for i = 1:nM
         sigM_M(:) = scalar_sigma_per_model(i);
     end
 
-    % After computing sigM_M for model i, add:
     if isfield(S,'unc') && isfield(S.unc, fld) && ~isempty(S.unc.(fld)) && isequal(size(S.unc.(fld)), size(S.H))
         S.unc_source(i) = "per-pixel";
     elseif strcmp(name_i,'Losing') && isfield(S,'bounds') ...
@@ -516,7 +510,7 @@ for i = 1:nM
     fprintf('[unc] sources: per-pixel=%d, bounds→sigma=%d, scalar-fallback=%d\n', ...
     nnz(S.unc_source=="per-pixel"), nnz(S.unc_source=="bounds→sigma"), nnz(S.unc_source=="scalar-fallback"));
 
-    dm_i = get_model_margin(cfg, S, i);  % fixed margin by your choice
+    dm_i = get_model_margin(cfg, S, i);  
     pw_all = wet_prob_with_margin(gdif_M_all, sigM_M, sigG_M, dm_i);
     V      = isfinite(pw_all) & isfinite(y_raw_M);
 
@@ -525,11 +519,11 @@ for i = 1:nM
     Nf = numel(pw); 
     if Nf==0, continue; end
 
-    % valid masks for regional subsets within V
+    % valid masks
     mask_wet_ISPB_valid = mask_wet_ISPB_M(V);
     mask_dry_OSPB_valid = mask_dry_OSPB_M(V);
 
-    % Analytic expectations (given σ) — matches your intent
+    % Analytic expectations
     ETP  = sum(pw .* yr);          EFP  = sum(pw .* (1-yr));
     EFN  = sum((1-pw) .* yr);      ETN  = sum((1-pw) .* (1-yr));
     clamp = @(x) max(x, 0);
@@ -547,9 +541,9 @@ for i = 1:nM
     EXP_raw.ACC(i) =ACC_E; 
     EXP_raw.F1(i)  =F1_E;
 
-    % ---- NEW: analytic regional expectations ----
-    % ISPB wet recall (expected)
-    denom_wet_ISPB = sum( yr(mask_wet_ISPB_valid) );  % expected #true wet in this subset
+    % ---- regional expectations ----
+    % expected ISPB wet recall 
+    denom_wet_ISPB = sum( yr(mask_wet_ISPB_valid) );  
     if denom_wet_ISPB > 0
         ETP_wet_ISPB = sum( pw(mask_wet_ISPB_valid) .* yr(mask_wet_ISPB_valid) );
         REC_ISPB_wet_E = ETP_wet_ISPB / max(denom_wet_ISPB, eps);
@@ -557,7 +551,7 @@ for i = 1:nM
         REC_ISPB_wet_E = NaN;
     end
 
-    % OSPB dry recall (expected)
+    % expected OSPB dry recall
     denom_dry_OSPB = sum( (1-yr(mask_dry_OSPB_valid)) );
     if denom_dry_OSPB > 0
         ETN_dry_OSPB = sum( (1-pw(mask_dry_OSPB_valid)) .* (1-yr(mask_dry_OSPB_valid)) );
@@ -580,8 +574,6 @@ for i = 1:nM
     BR = struct(); 
     for s = stat_list, BR.(s{1}) = zeros(B,1); end
     BR.G = zeros(B,1); 
-
-    % NEW: regional metrics per bootstrap
     BR.REC_ISPB_wet      = zeros(B,1);
     BR.REC_OSPB_dry      = zeros(B,1);
     BR.G_ISPBwet_OSPBdry = zeros(B,1);
@@ -592,7 +584,7 @@ for i = 1:nM
     s_all = [];  % lazily compute when needed
 
     if strcmpi(cfg.uncertainty.bootstrap_mode,'pixel')
-        % -------- Pixel bootstrap (optionally class-balanced) ----------
+        % -------- Pixel bootstrap ----------
         for b = 1:B
             pos = find(yr==1); 
             neg = find(yr==0);
@@ -601,14 +593,11 @@ for i = 1:nM
             Nf   = nPos + nNeg;
 
             if cfg.uncertainty.class_balance && nPos>0 && nNeg>0
-                % Stratified bootstrap: preserve counts exactly
-                rPos = pos(randi(nPos, nPos, 1));   % with replacement
-                rNeg = neg(randi(nNeg, nNeg, 1));   % with replacement
+                rPos = pos(randi(nPos, nPos, 1));   
+                rNeg = neg(randi(nNeg, nNeg, 1));   
                 rb   = [rPos; rNeg];
-                % Optional: shuffle to avoid block structure
                 rb   = rb(randperm(Nf));
             else
-                % i.i.d. bootstrap (fallback if a class is empty)
                 rb   = randi(Nf, Nf, 1);
             end
 
@@ -628,7 +617,6 @@ for i = 1:nM
             BR.SPEC(b)=mB.SPEC; BR.REC(b)=mB.REC; BR.PREC(b)=mB.PREC; BR.ACC(b)=mB.ACC; BR.F1(b)=mB.F1;
             BR.G(b)   = sqrt(max(mB.REC,0)*max(mB.SPEC,0));
 
-            % ---- NEW: regional metrics in bootstrap ----
             mask_wet_ISPB_b = mask_wet_ISPB_valid(rb);
             mask_dry_OSPB_b = mask_dry_OSPB_valid(rb);
 
@@ -660,7 +648,7 @@ for i = 1:nM
         end
 
     else
-        % -------- Component bootstrap (with replacement; optional PPS) ----------
+        % -------- Component bootstrap with replacement ----------
         Vmask = false(numel(pw_all),1); Vmask(V) = true;
         GV = {};
         if ~isempty(G_M)
@@ -688,7 +676,6 @@ for i = 1:nM
                 BR.SPEC(b)=mB.SPEC; BR.REC(b)=mB.REC; BR.PREC(b)=mB.PREC; BR.ACC(b)=mB.ACC; BR.F1(b)=mB.F1;
                 BR.G(b)   = sqrt(max(mB.REC,0) * max(mB.SPEC,0));
 
-                % regional metrics (pixel-style fallback)
                 mask_wet_ISPB_b = mask_wet_ISPB_valid(rb);
                 mask_dry_OSPB_b = mask_dry_OSPB_valid(rb);
 
@@ -721,7 +708,7 @@ for i = 1:nM
             mfrac = max(0, min(1, cfg.uncertainty.mfrac));
             mapM2V = zeros(numel(Vmask),1); mapM2V(V) = 1:nnz(V);
 
-            % PPS weights if requested
+            % PPS weights
             if cfg.uncertainty.pps_components
                 w = cellfun(@numel, GV); sW = sum(w);
                 if sW>0, w = w / sW; else, w = []; end
@@ -757,7 +744,6 @@ for i = 1:nM
                 BR.SPEC(b)=mB.SPEC; BR.REC(b)=mB.REC; BR.PREC(b)=mB.PREC; BR.ACC(b)=mB.ACC; BR.F1(b)=mB.F1;
                 BR.G(b)   = sqrt(max(mB.REC,0) * max(mB.SPEC,0));
 
-                % regional metrics for component bootstrap
                 mask_wet_ISPB_b = mask_wet_ISPB_valid(idxV);
                 mask_dry_OSPB_b = mask_dry_OSPB_valid(idxV);
 
@@ -799,7 +785,7 @@ for i = 1:nM
     CIi_raw.G(i,:) = prctile(BR.G,  100*[(1-cfg.uncertainty.band_inner)/2, 1 - (1-cfg.uncertainty.band_inner)/2]);
     EXP_raw.G(i,1) = sqrt(max(EXP_raw.REC(i),0) * max(EXP_raw.SPEC(i),0));
 
-    % CI computation for regional metric
+    % CI computation for regional metrics
     CI_raw.REC_ISPB_wet(i,:)      = prctile(BR.REC_ISPB_wet,      100*[(1-cfg.uncertainty.band_main)/2, 1 - (1-cfg.uncertainty.band_main)/2]);
     CI_raw.REC_OSPB_dry(i,:)      = prctile(BR.REC_OSPB_dry,      100*[(1-cfg.uncertainty.band_main)/2, 1 - (1-cfg.uncertainty.band_main)/2]);
     CI_raw.G_ISPBwet_OSPBdry(i,:) = prctile(BR.G_ISPBwet_OSPBdry, 100*[(1-cfg.uncertainty.band_main)/2, 1 - (1-cfg.uncertainty.band_main)/2]);
@@ -818,7 +804,6 @@ for s = stat_list
 end
 S.Gstats.G_raw = struct('EXP', EXP_raw.G, 'CI', CI_raw.G, 'CIi', CIi_raw.G);
 
-% NEW: Gstats entries for regional metrics
 S.Gstats.REC_ISPB_wet_raw = struct('EXP', EXP_raw.REC_ISPB_wet, ...
                                    'CI',  CI_raw.REC_ISPB_wet, ...
                                    'CIi', CIi_raw.REC_ISPB_wet);
@@ -831,7 +816,6 @@ S.Gstats.G_ISPBwet_OSPBdry_raw = struct('EXP', EXP_raw.G_ISPBwet_OSPBdry, ...
                                         'CI',  CI_raw.G_ISPBwet_OSPBdry, ...
                                         'CIi', CIi_raw.G_ISPBwet_OSPBdry);
 
-% Suggested margins (for logs/info)
 is_flat = startsWith(S.names,'Flat_')'; nf = find(~is_flat);
 if ~isempty(nf)
     S.suggested_margin_mean   = median(S.sigma_gdif_mean(nf),   'omitnan');
@@ -844,7 +828,7 @@ fprintf('[Margin] suggested decision margin ≈ mean: %.3f  | median: %.3f (mW m
     S.suggested_margin_mean, S.suggested_margin_median);
 fprintf('[Margin] mode: "%s" | fixed=%.3f\n', string(cfg.decision_margin_mode), cfg.decision_margin);
 
-%% Append σ(GΔ) summaries & CI CSV
+%% σ(GΔ) summaries & CI CSV
 S.results_table.sigmaGdel_mean   = S.sigma_gdif_mean;
 S.results_table.sigmaGdel_median = S.sigma_gdif_median;
 timestamp_sigma = char(datetime('now','Format','yyyyMMdd_HHmmss'));
@@ -888,7 +872,6 @@ if okCI
           'ACC_raw','ACC_raw_lo','ACC_raw_hi', ...
           'F1_raw','F1_raw_lo','F1_raw_hi'});
 
-    % Optional G columns (only if present & correctly shaped)
     haveG = isfield(S.Gstats,'G_raw') && isfield(S.Gstats.G_raw,'EXP') && ...
             ~isempty(S.Gstats.G_raw.EXP) && isfield(S.Gstats.G_raw,'CI') && ...
             ~isempty(S.Gstats.G_raw.CI) && size(S.Gstats.G_raw.CI,2)==2;
@@ -902,7 +885,7 @@ if okCI
       Tsum.G_raw_hi = G_hi;
     end
 
-    % NEW: CI summary columns for regional metric
+    % CI summary columns for regional metric
     haveReg = isfield(S.Gstats,'REC_ISPB_wet_raw') && ...
               isfield(S.Gstats.REC_ISPB_wet_raw,'EXP') && ...
               isfield(S.Gstats.REC_ISPB_wet_raw,'CI') && ...
@@ -960,7 +943,7 @@ S_plot = struct();
 S_plot.includes = {'X_km','Y_km','H','viz_mask','sink_mask_comp','comp_id', ...
                 'roi_mask','y_raw_full','mask_ISPB','mask_OSPB', ...
                 'mask_SPB','rect_mask','ds_stride','names','titles','Gstats'};
-% Add downsampled model grids (optional, helpful for quick plots)
+
 S_plot.models_ds = struct();
 validNames = cellfun(@(c) matlab.lang.makeValidName(c), S.names, 'uni', 0);
 for ii = 1:numel(S.names)
@@ -983,20 +966,15 @@ if isfield(S,'sigma_gdif_median'), S_plot.sigma_gdif_median = S.sigma_gdif_media
 if isfield(S,'suggested_margin_mean'),   S_plot.suggested_margin_mean   = S.suggested_margin_mean;   end
 if isfield(S,'suggested_margin_median'), S_plot.suggested_margin_median = S.suggested_margin_median; end
 
-% ---- Attach CI/EXP to the lightweight plotting bundle ----
-% (Place this immediately before the save(...) call.)
 
-% Helper to safely fetch columns (works even if a field is missing)
 getCol_plot = @(fld, sub, n) i_getCol(S.Gstats, fld, sub, n);
 getCI_plot  = @(fld, which, n) i_getCI(S.Gstats, fld, which, n); % which = 1(lo) | 2(hi)
 
 nM = numel(S.names);
 
-% Stats we carry
 stat_list = {'SPEC','REC','PREC','ACC','F1'};
 S_plot.stats = struct();
 
-% Core stats: EXP, CI (main), CIi (inner) for each metric
 for k = 1:numel(stat_list)
     fld = [stat_list{k} '_raw'];
     EXP = getCol_plot(fld, 'EXP', nM);
@@ -1040,7 +1018,6 @@ else
     end
 end
 
-% NEW: S_plot.stats for regional metric
 S_plot.stats.REC_ISPB_wet = struct('EXP', NaN(nM,1), 'CI', NaN(nM,2), 'CIi', NaN(nM,2), ...
                                    'lo', NaN(nM,1), 'hi', NaN(nM,1), 'lo50', NaN(nM,1), 'hi50', NaN(nM,1));
 S_plot.stats.REC_OSPB_dry = struct('EXP', NaN(nM,1), 'CI', NaN(nM,2), 'CIi', NaN(nM,2), ...
@@ -1087,44 +1064,6 @@ if isfield(S.Gstats,'G_ISPBwet_OSPBdry_raw')
         S_plot.stats.G_ISPBwet_OSPBdry.CIi  = [i_pad(S.Gstats.G_ISPBwet_OSPBdry_raw.CIi(:,1), nM), i_pad(S.Gstats.G_ISPBwet_OSPBdry_raw.CIi(:,2), nM)];
         S_plot.stats.G_ISPBwet_OSPBdry.lo50 = S_plot.stats.G_ISPBwet_OSPBdry.CIi(:,1);
         S_plot.stats.G_ISPBwet_OSPBdry.hi50 = S_plot.stats.G_ISPBwet_OSPBdry.CIi(:,2);
-    end
-end
-
-% Convenience flat envelopes (min/max across flat models) — optional but handy for plots
-is_flat = startsWith(S.names,'Flat_')';
-if any(is_flat)
-    flats = find(is_flat);
-    % for each metric, store envelope across flats
-    for k = 1:numel(stat_list)
-        mname = stat_list{k};
-        val  = S_plot.stats.(mname).EXP;
-        lo   = S_plot.stats.(mname).lo;
-        hi   = S_plot.stats.(mname).hi;
-        S_plot.flat_envelope.(mname) = struct( ...
-            'exp_min', min(val(flats), [], 'omitnan'), ...
-            'exp_max', max(val(flats), [], 'omitnan'), ...
-            'ci_lo_min', min(lo(flats), [], 'omitnan'), ...
-            'ci_hi_max', max(hi(flats), [], 'omitnan'));
-    end
-    % G envelope if present
-    if all(isfield(S_plot.stats.G, {'EXP','lo','hi'}))
-        gv = S_plot.stats.G.EXP; glo = S_plot.stats.G.lo; ghi = S_plot.stats.G.hi;
-        S_plot.flat_envelope.G = struct( ...
-            'exp_min', min(gv(flats), [], 'omitnan'), ...
-            'exp_max', max(gv(flats), [], 'omitnan'), ...
-            'ci_lo_min', min(glo(flats), [], 'omitnan'), ...
-            'ci_hi_max', max(ghi(flats), [], 'omitnan'));
-    end
-    % also envelope for regional G, if you want it
-    if isfield(S_plot.stats,'G_ISPBwet_OSPBdry') && all(isfield(S_plot.stats.G_ISPBwet_OSPBdry,{'EXP','lo','hi'}))
-        gv = S_plot.stats.G_ISPBwet_OSPBdry.EXP;
-        glo = S_plot.stats.G_ISPBwet_OSPBdry.lo;
-        ghi = S_plot.stats.G_ISPBwet_OSPBdry.hi;
-        S_plot.flat_envelope.G_ISPBwet_OSPBdry = struct( ...
-            'exp_min', min(gv(flats), [], 'omitnan'), ...
-            'exp_max', max(gv(flats), [], 'omitnan'), ...
-            'ci_lo_min', min(glo(flats), [], 'omitnan'), ...
-            'ci_hi_max', max(ghi(flats), [], 'omitnan'));
     end
 end
 
@@ -1181,9 +1120,9 @@ for ii = 1:numel(S.names)
     end
 end
 
-end % ===== function end =====
+end 
 
-%% ===================== Helpers =====================
+%% helpers
 function s = region_suffix(cfg)
     s = '';
     try

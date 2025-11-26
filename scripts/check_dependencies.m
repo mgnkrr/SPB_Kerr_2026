@@ -1,20 +1,13 @@
 function check_dependencies(opts)
-
-%CHECK_DEPENDENCIES  Verify required toolboxes and Antarctic Mapping Tools.
-%   check_dependencies()                          % defaults
-%   check_dependencies(struct('autoInstall',true,'needAMT',true,'verbose',true))
-%
-%   Toolboxes checked (must-have):
 %     - Image Processing Toolbox  (bwconncomp, bwboundaries)
 %     - Statistics & Machine Learning Toolbox (glmfit, glmval, zscore, quantile/prctile)
-%   Optional (warn if used by your cfg):
 %     - Parallel Computing Toolbox (parfor when cfg.use_parallel=true)
-%   Add-on (optional but requested): Antarctic Mapping Tools (AMT)
+%     - Antarctic Mapping Tools 
 
     % ---------- options ----------
     if nargin<1 || ~isstruct(opts), opts = struct; end
     def.autoInstall = true;    % try to auto-install AMT from GitHub zip
-    def.needAMT     = true;    % require AMT (set false to only warn)
+    def.needAMT     = true;    % require AMT 
     def.verbose     = true;
     opts = fill_defaults(opts, def);
 
@@ -23,19 +16,19 @@ function check_dependencies(opts)
 
     % ---------- MATLAB release sanity ----------
     try
-        if verLessThan('matlab','9.8')  % R2020a introduced exportgraphics
+        if verLessThan('matlab','9.8') 
             log('MATLAB < R2020a detected; exportgraphics may be unavailable. Using print() fallback.');
         end
     catch
     end
 
-    % ---------- must-have toolboxes ----------
+    % ---------- must-have ----------
     needs = [ ...
         toolbox_req('Image Processing Toolbox',   'image_toolbox',      {@() existsAll({'bwconncomp','bwboundaries'})}); ...
         toolbox_req('Statistics and Machine Learning Toolbox', 'statistics_toolbox', {@() existsAll({'glmfit','glmval','zscore','prctile'})}); ...
     ];
 
-    % Optional toolbox (warn-only)
+    % Optional 
     optional = [ ...
         toolbox_req('Parallel Computing Toolbox', 'distrib_computing_toolbox', {@() existsAll({'parfor'})}, false) ...
     ];
@@ -62,7 +55,7 @@ function check_dependencies(opts)
         end
     end
 
-    % ---------- Antarctic Mapping Tools (AMT) ----------
+    % ---------- Antarctic Mapping Tools ----------
     wantAMT = logical(opts.needAMT);
     if wantAMT
         haveAMT = exist('antbounds','file')==2 || exist('bedmap2','file')==2 || exist('measuresps','file')==2;
@@ -79,7 +72,7 @@ function check_dependencies(opts)
                     target = fullfile(userpath, 'toolboxes', 'AMT');
                     if ~exist(target,'dir'), mkdir(target); end
                     unzip(tmpzip, target);
-                    % The repo unzips into a subfolder—add everything:
+
                     addpath(genpath(target));
                     savepath;
                     haveAMT = exist('antbounds','file')==2 || exist('bedmap2','file')==2;
@@ -103,7 +96,7 @@ function check_dependencies(opts)
         log('AMT check skipped (needAMT=false).');
     end
 
-    % ---------- nested helpers ----------
+    % ---------- helpers ----------
     function t = toolbox_req(name, lic, tests, must)
         if nargin<4, must = true; end
         t = struct('name',name,'lic',lic,'tests',{tests},'must',must);
@@ -119,10 +112,9 @@ function check_dependencies(opts)
     function missing_msg(fatal, name, lic, tests)
         feats = {};
         for jj=1:numel(tests)
-            % crude feature names from function handles (for user message)
             try
                 fstr = func2str(tests{jj});
-                feats{end+1} = fstr; %#ok<AGROW>
+                feats{end+1} = fstr; 
             catch
             end
         end

@@ -1,7 +1,9 @@
 function R = make_synthetic_GHF_MCMC_new(cfg)
-% MAKE_SYNTHETIC_GHF_MCMC (streamlined, physics-gated) — whole-grid mean + spec-valid median
+% MAKE_SYNTHETIC_GHF_MCMC
 %   Single-chain MCMC maximizing performance metric:
-%       G_ISPBwet_OSPBdry = sqrt( REC(wet in ISPB) * REC(dry in OSPB) )
+%       Gmean = sqrt( REC * SPEC )
+%   where REC and SPEC are the global recall and specificity of the
+%   classifier based on G - Gmin within the ROI.
 %
 %   Records:
 %     - G_mu_grid:  whole-grid mean(G) after gating (finite pixels)
@@ -21,7 +23,7 @@ cfg = set_default(cfg, 'sample_angle',    true);
 cfg = set_default(cfg, 'n_steps',         12000);
 cfg = set_default(cfg, 'burn_frac',       0.25);
 cfg = set_default(cfg, 'thin',            1);
-cfg = set_default(cfg, 'beta',            6);            % posterior scale for regional G-mean
+cfg = set_default(cfg, 'beta',            6);            % posterior scale for G-mean  % *** CHANGED: comment
 cfg = set_default(cfg, 'step_mu',         30);
 cfg = set_default(cfg, 'step_het',        30);
 cfg = set_default(cfg, 'step_theta',      30);
@@ -32,7 +34,7 @@ cfg = set_default(cfg, 'prior_type',      'softbox');    % 'softbox' | 'gaussian
 cfg = set_default(cfg, 'soft_k',          3);
 cfg = set_default(cfg, 'seed',            42);
 cfg = set_default(cfg, 'outdir',          'figs_out');
-cfg = set_default(cfg, 'region_mode',     'ALL');        % recommended: 'ALL' so ISPB+OSPB both present
+cfg = set_default(cfg, 'region_mode',     'ALL');       
 cfg = set_default(cfg, 'verbose',         true);
 cfg = set_default(cfg, 'save_maps',       true);
 cfg = set_default(cfg, 'map_every',       1000);
@@ -123,13 +125,13 @@ if ~isempty(cfg.roi_x_range) || ~isempty(cfg.roi_y_range)
     S_static.roi_mask = S_static.roi_mask & coord_mask;
 end
 
-% Freeze ROI vectors (no allocations inside loop)
+% Freeze ROI vectors 
 idx = find(S_static.roi_mask);
 S_static.roi_idx   = idx;
 spec_roi           = S_static.Q(idx);
 S_static.y_raw_vec = isfinite(spec_roi) & (spec_roi ~= 9999) & (spec_roi > spec_thr);
 
-% Region labels on ROI-vector (for new metric)
+% Region labels on ROI-vector
 if isfield(S_static,'mask_ISPB') && isfield(S_static,'mask_OSPB')
     S_static.roi_ISPB = logical(S_static.mask_ISPB(idx));  % same length as roi_idx
     S_static.roi_OSPB = logical(S_static.mask_OSPB(idx));
@@ -146,7 +148,7 @@ roi = S_static.roi_mask;
 pctGminFinite = 100*nnz(isfinite(S_static.Gmin(roi)))/max(1,nnz(roi));
 fprintf('[check] Gmin finite in ROI: %.1f%%%%\n', pctGminFinite);
 
-%% ---------------- Precompute ramps (gradient mode) ----------------
+%% ---------------- Precompute ramps ----------------
 rampCache = containers.Map('KeyType','char','ValueType','any');
 if strcmpi(cfg.template_mode,'gradient')
     th_lo = ceil(cfg.theta_range_deg(1)); th_hi = floor(cfg.theta_range_deg(2));
@@ -167,9 +169,9 @@ probe_list = [mu0, het0, 0; mu0, max(cfg.het_range)*0.8, 0; mu0, min(cfg.het_ran
 probe_list = probe_list(:,1:numel(params0));
 for i=1:size(probe_list,1)
     [Gtmp, pst] = build_G_from_params(X, Y, cfg, probe_list(i,:), rampCache);
-    [g_reg, r_IS, r_OS, mu_grid, med_spec]  = evaluate_params(Gtmp, S_static, cfg, true);
-    fprintf('[probe %d] %s -> G_ISPBwet×OSPBdry=%.3f (REC_ISPB_wet=%.3f, REC_OSPB_dry=%.3f) | <G>=%.2f | med_spec(G)=%.2f\n', ...
-        i, fmtv(probe_list(i,:)), g_reg, r_IS, r_OS, mu_grid, med_spec);
+    [gmean_probe, rec_probe, spec_probe, mu_grid, med_spec]  = evaluate_params(Gtmp, S_static, cfg, true); % *** CHANGED: names only
+    fprintf('[probe %d] %s -> G_REC×SPEC=%.3f (REC=%.3f, SPEC=%.3f) | <G>=%.2f | med_spec(G)=%.2f\n', ...
+        i, fmtv(probe_list(i,:)), gmean_probe, rec_probe, spec_probe, mu_grid, med_spec);                   % *** CHANGED: print string
     print_phys_stats('probe', pst);
 end
 
@@ -188,13 +190,13 @@ chain_gmed_spec  = nan(K,1);   % spec-valid median(G) after gating
 best = struct('params',params,'gmean',gmean0,'rec',rec0,'spec',spec0,'post',post0, ...
               'iter',1,'mu_grid',mu_grid0,'med_spec',med_spec0);
 
-fprintf(['[mcmc] Start @ params=%s | G_ISPBwet×OSPBdry=%.3f ' ...
-         '(REC_ISPB_wet=%.3f, REC_OSPB_dry=%.3f) | post=%.3f | <G>=%.2f | med_spec(G)=%.2f\n'], ...
+fprintf(['[mcmc] Start @ params=%s | G_REC×SPEC=%.3f ' ...    
+         '(REC=%.3f, SPEC=%.3f) | post=%.3f | <G>=%.2f | med_spec(G)=%.2f\n'], ...
         fmtv(params), gmean0, rec0, spec0, post0, mu_grid0, med_spec0);
 print_phys_stats('start', pst0);
 
 % Memo cache (full eval only)
-% Cache layout: [g_reg, REC_ISPB_wet, REC_OSPB_dry, mu_grid, med_spec]
+% Cache layout: [gmean, REC, SPEC, mu_grid, med_spec]  
 ScoreCache = containers.Map('KeyType','char','ValueType','any');
 accepts = 0; last_map_iter = 0;
 
@@ -211,13 +213,13 @@ for k = 1:K
     key = cache_key(prop, cfg.cache_round, cfg);
     used_cache = false;
 
-    % --- Delayed-acceptance proxy using regional metric ---
+    % --- Delayed-acceptance proxy using global G-mean ---
     do_full_eval = true;
     if cfg.proxy_gate > 0
         [Gproxy, ~] = build_G_from_params(X, Y, cfg, prop, rampCache);
-        p_gm = proxy_gmean(Gproxy, S_static);  % now returns regional G-mean
+        p_gm = proxy_gmean(Gproxy, S_static); 
         if p_gm < cfg.proxy_gate
-            do_full_eval = false; % early reject unless prior boosts it (rare)
+            do_full_eval = false; 
         end
     end
 
@@ -266,29 +268,27 @@ for k = 1:K
     end
 
     chain_params(k,:) = params;
-    chain_score(k)    = gmean0;      % regional G-mean
+    chain_score(k)    = gmean0;      
     chain_lp(k)       = lp0;
     chain_post(k)     = post0;
     chain_gmu_grid(k)  = mu_grid0;
     chain_gmed_spec(k) = med_spec0;
 
     if cfg.verbose && mod(k, max(1,round(K/20)))==0
-        fprintf(['[mcmc] %4d/%4d | acc=%.1f%%%% | G_ISPBwet×OSPBdry=%.3f ' ...
+        fprintf(['[mcmc] %4d/%4d | acc=%.1f%%%% | G_REC×SPEC=%.3f ' ...  
                  '| post=%.3f | <G>=%.2f | med_spec(G)=%.2f | params=%s%s\n'], ...
             k, K, 100*accepts/k, gmean0, post0, mu_grid0, med_spec0, fmtv(params), ternary(used_cache,' [cache]',''));
     end
 end
 
-% --- Final best map (kept open) ---
 [GbestFinal, ~] = build_G_from_params(X, Y, cfg, best.params, rampCache);
-save_one_map(GbestFinal, X, Y, cfg, mapdir, sprintf('BEST_final_iter%d', best.iter), [], true); % keep_open = true
+save_one_map(GbestFinal, X, Y, cfg, mapdir, sprintf('BEST_final_iter%d', best.iter), [], true); 
 
-% Also emit a GeoTIFF for QGIS
 qgis_save_geotiff(GbestFinal, X, Y, fullfile(mapdir, sprintf('ghf_best_%s.tif', run_id)), -9999);
 
 acc_rate = accepts / K;
-fprintf(['[mcmc] Done. Acceptance rate = %.1f%%%% | Best G_ISPBwet×OSPBdry=%.3f @ %s ' ...
-         '(REC_ISPB_wet=%.3f, REC_OSPB_dry=%.3f) | <G>=%.2f | med_spec(G)=%.2f\n'], ...
+fprintf(['[mcmc] Done. Acceptance rate = %.1f%%%% | Best G_REC×SPEC=%.3f @ %s ' ...   
+         '(REC=%.3f, SPEC=%.3f) | <G>=%.2f | med_spec(G)=%.2f\n'], ...
     100*acc_rate, best.gmean, fmtv(best.params), best.rec, best.spec, best.mu_grid, best.med_spec);
 
 %% ---------------- Post & save ----------------
@@ -302,7 +302,6 @@ keep_medS   = chain_gmed_spec(keep_idx);
 
 names = param_names(cfg);
 
-% NOTE: "Gmean" now means regional G_ISPBwet×OSPBdry
 T_all  = array2table(chain_params, 'VariableNames', names);
 T_all.Gmean               = chain_score;
 T_all.LogPrior            = chain_lp;
@@ -317,7 +316,7 @@ T_keep.Posterior           = keep_post;
 T_keep.G_mu_grid           = keep_mu;
 T_keep.G_median_specvalid  = keep_medS;
 
-plot_trace(chain_score, 'G_ISPBwet×OSPBdry', cfg, run_id, cfg.outdir);
+plot_trace(chain_score, 'G_REC×SPEC', cfg, run_id, cfg.outdir);  % *** CHANGED: trace label
 for d=1:Ddim, plot_trace(chain_params(:,d), names{d}, cfg, run_id, cfg.outdir); end
 plot_posterior(keep_params, names, cfg, run_id, cfg.outdir);
 plot_pairs(keep_params, names, cfg, run_id, cfg.outdir);
@@ -426,8 +425,8 @@ end
 
 function g = proxy_gmean(G, S_static)
 % PROXY_GMEAN
-%   Cheap surrogate for the regional metric using a median-threshold
-%   classifier on raw G within ROI.
+%   Cheap surrogate for the global G-mean using a median-threshold
+%   classifier on raw G within ROI (ignores Gmin).
 idx = S_static.roi_idx;
 if isempty(idx) || ~isfield(S_static,'y_raw_vec') || isempty(S_static.y_raw_vec)
     g = 0; return;
@@ -435,15 +434,11 @@ end
 
 y = logical(S_static.y_raw_vec(:));
 Gi = double(G(idx));
-roi_ISPB = S_static.roi_ISPB(:);
-roi_OSPB = S_static.roi_OSPB(:);
 
 bad = ~isfinite(Gi) | ~isfinite(y);
 if any(bad)
-    Gi(bad)      = [];
-    y(bad)       = [];
-    roi_ISPB(bad)= [];
-    roi_OSPB(bad)= [];
+    Gi(bad) = [];
+    y(bad)  = [];
 end
 if isempty(Gi) || numel(y)~=numel(Gi)
     g = 0; return;
@@ -452,37 +447,24 @@ end
 thr  = median(Gi,'omitnan');
 yhat = Gi >= thr;
 
-% regional recalls
-pos_IS = y & roi_ISPB;
-neg_OS = ~y & roi_OSPB;
-
-N_wet_ISPB  = nnz(pos_IS);
-N_dry_OSPB  = nnz(neg_OS);
-
-if N_wet_ISPB==0 || N_dry_OSPB==0
-    % fallback: global confusion
-    [rec_all, spec_all] = local_confusion(y, yhat);
-    g = sqrt(rec_all*spec_all);
-else
-    REC_ISPB_wet  = nnz(pos_IS & yhat) / max(1,N_wet_ISPB);
-    TN_OSPB       = nnz(neg_OS & ~yhat);
-    REC_OSPB_dry  = TN_OSPB / max(1,N_dry_OSPB);
-    g             = sqrt(max(REC_ISPB_wet,0)*max(REC_OSPB_dry,0));
-end
-
+[rec_all, spec_all] = local_confusion(y, yhat);
+g = sqrt(rec_all * spec_all);
 g = clamp01(g);
 end
 
-function [gmean, REC_ISPB_wet, REC_OSPB_dry, mu_grid, med_spec] = evaluate_params(G, S_static, cfg, verbose)
+function [gmean, REC_all, SPEC_all, mu_grid, med_spec, REC_ISPB_wet, REC_OSPB_dry] = evaluate_params(G, S_static, cfg, verbose)
 % Robust evaluator using GDelta = G - Gmin inside frozen ROI.
 % Returns:
-%   gmean        : regional G_ISPBwet×OSPBdry
-%   REC_ISPB_wet : recall of wet sinks in ISPB
-%   REC_OSPB_dry : recall of dry sinks in OSPB (true-negative recall)
+%   gmean        : global sqrt(REC * SPEC) based on G - Gmin
+%   REC_all      : global recall (sensitivity)
+%   SPEC_all     : global specificity
 %   mu_grid      : whole-grid mean(G) after gating (finite pixels)
 %   med_spec     : median(G) over all spec-valid pixels (Q ~= 9999), independent of ROI
+%   REC_ISPB_wet : recall of wet sinks in ISPB (diagnostic only)
+%   REC_OSPB_dry : recall of dry sinks in OSPB (true-negative recall; diagnostic only)
 
-idx = S_static.roi_idx; y = logical(S_static.y_raw_vec(:));
+idx = S_static.roi_idx; 
+y   = logical(S_static.y_raw_vec(:));
 assert(numel(idx)==numel(y), 'ROI/label length mismatch.');
 
 % Whole-grid mean(G) (post-gating)
@@ -521,25 +503,16 @@ n    = numel(y);
 npos = nnz(y);
 nneg = n - npos;
 
+REC_ISPB_wet = NaN;
+REC_OSPB_dry = NaN;
+
 if n==0 || npos==0 || nneg==0
-    % fallback to proxy-like global G-mean
-    thr  = median(double(G(idx)),'omitnan');
-    Gi   = double(G(idx));
-    bad2 = ~isfinite(Gi);
-    if any(bad2)
-        Gi(bad2) = [];
-        y2 = y; y2(bad2) = [];
-    else
-        y2 = y;
-    end
-    yhat = Gi >= thr;
-    [rec_all, spec_all] = local_confusion(y2, yhat);
-    gmean          = sqrt(rec_all*spec_all);
-    REC_ISPB_wet   = NaN;
-    REC_OSPB_dry   = NaN;
+    % Degenerate: set metrics to zero/NaN in a controlled way
+    gmean    = 0;
+    REC_all  = 0;
+    SPEC_all = 0;
     if verbose
-        fprintf('[triage] Degenerate global classes; proxy global G-mean used. REC=%.3f SPEC=%.3f Gmn=%.3f\n', ...
-            rec_all, spec_all, gmean);
+        fprintf('[eval:Gmin] Degenerate classes: n=%d pos=%d neg=%d; setting Gmean=0.\n', n, npos, nneg);
     end
     return;
 end
@@ -547,9 +520,9 @@ end
 % decision rule on GDelta
 yhat = (g - gm) >= 0;
 
-% global confusion (for diagnostics / fallback)
-[rec_all, spec_all] = local_confusion(y, yhat);
-G_global = sqrt(rec_all*spec_all);
+% global confusion (objective)
+[REC_all, SPEC_all] = local_confusion(y, yhat);
+gmean = sqrt(REC_all * SPEC_all);
 
 % regional labels (after same "bad" filter)
 roi_ISPB = S_static.roi_ISPB(:);
@@ -559,45 +532,32 @@ if any(bad)
     roi_OSPB(bad) = [];
 end
 
-pos_IS    = y  & roi_ISPB;
-neg_OS    = ~y & roi_OSPB;
+pos_IS     = y  & roi_ISPB;
+neg_OS     = ~y & roi_OSPB;
 N_wet_ISPB = nnz(pos_IS);
 N_dry_OSPB = nnz(neg_OS);
 
-if N_wet_ISPB==0 || N_dry_OSPB==0
-    % if one region has no relevant class, fall back to global as objective
-    REC_ISPB_wet  = NaN;
-    REC_OSPB_dry  = NaN;
-    gmean         = G_global;
-    if verbose
-        fprintf(['[eval:Gmin] Regional counts degenerate (Nwet_ISPB=%d, Ndry_OSPB=%d); ' ...
-                 'using global G-mean=%.3f (REC_all=%.3f, SPEC_all=%.3f)\n'], ...
-                 N_wet_ISPB, N_dry_OSPB, gmean, rec_all, spec_all);
-    end
-    return;
+if N_wet_ISPB > 0
+    TP_ISPB       = nnz(pos_IS &  yhat);
+    REC_ISPB_wet  = TP_ISPB / max(1, N_wet_ISPB);
+end
+if N_dry_OSPB > 0
+    TN_OSPB       = nnz(neg_OS & ~yhat);
+    REC_OSPB_dry  = TN_OSPB / max(1, N_dry_OSPB);
 end
 
-% regional recalls
-TP_ISPB       = nnz(pos_IS &  yhat);
-TN_OSPB       = nnz(neg_OS & ~yhat);
-
-REC_ISPB_wet  = TP_ISPB / max(1, N_wet_ISPB);
-REC_OSPB_dry  = TN_OSPB / max(1, N_dry_OSPB);
-
-REC_ISPB_wet  = max(0,min(1,REC_ISPB_wet));
-REC_OSPB_dry  = max(0,min(1,REC_OSPB_dry));
-
-gmean = sqrt(max(REC_ISPB_wet,0) * max(REC_OSPB_dry,0));
+REC_ISPB_wet = max(0,min(1,REC_ISPB_wet));
+REC_OSPB_dry = max(0,min(1,REC_OSPB_dry));
 
 if verbose
     fprintf(['[eval:Gmin] n=%d | pos=%d neg=%d | ' ...
-             'REC_ISPB_wet=%.3f (N=%d) | REC_OSPB_dry=%.3f (N=%d) | ' ...
-             'G_ISPBwet×OSPBdry=%.3f | [global REC=%.3f SPEC=%.3f G=%.3f]\n'], ...
-        n, npos, nneg, REC_ISPB_wet, N_wet_ISPB, REC_OSPB_dry, N_dry_OSPB, ...
-        gmean, rec_all, spec_all, G_global);
+             'REC=%.3f SPEC=%.3f Gmean=%.3f | ' ...
+             'REC_ISPB_wet=%.3f (N=%d) | REC_OSPB_dry=%.3f (N=%d)\n'], ...
+        n, npos, nneg, REC_all, SPEC_all, gmean, ...
+        REC_ISPB_wet, N_wet_ISPB, REC_OSPB_dry, N_dry_OSPB);
 end
 
-% Optional heavy bootstrap (skipped by default)
+% Optional heavy bootstrap 
 if ~cfg.skip_bootstrap
     try
         cfg_eval = struct('synthetic_G',double(G), 'synthetic_name','MCMC', ...
@@ -644,7 +604,7 @@ otherwise
     error('Unknown prior_type: %s', cfg.prior_type);
 end
 
-% optional clipping penalty (fast analytic proxy)
+% optional clipping penalty 
 if isfield(cfg,'penalize_clip') && cfg.penalize_clip
     frac_clip = 0;
     if strcmpi(cfg.template_mode,'gradient')
@@ -692,8 +652,6 @@ end
 function z = clamp01(z), z = max(0, min(1, z)); end
 
 function ok = save_one_map(G, X, Y, cfg, outdir, tag, clim, keep_open)
-% SAVE_ONE_MAP  Save a map and (optionally) keep the last one open.
-% Uses display downsampling only; evaluation math untouched.
 
     if nargin < 7 || isempty(clim)
         g = G(isfinite(G));
@@ -710,7 +668,6 @@ function ok = save_one_map(G, X, Y, cfg, outdir, tag, clim, keep_open)
     end
     if nargin < 8, keep_open = false; end
 
-    % --- display-only downsampling (keeps evaluation math intact) ---
     ds = 1;
     if isfield(cfg,'map_downsample') && ~isempty(cfg.map_downsample) && cfg.map_downsample > 1
         ds = round(cfg.map_downsample);
@@ -727,9 +684,7 @@ function ok = save_one_map(G, X, Y, cfg, outdir, tag, clim, keep_open)
     end
 end
 
-function ok = save_map_figure(G, XYXlim, XYYlim, clim, cfg, outdir, name, keep_open)
-% SAVE_MAP_FIGURE  Render and save map; optionally keep figure open.
-% XYXlim = [xmin xmax], XYYlim = [ymin ymax]. Avoids pcolor/webgl overload.
+function ok = save_map_figure(G, XYXlim, XYYlim, clim, cfg, outdir, name, keep_open).
 
     if nargin < 8, keep_open = false; end
     if ~exist(outdir,'dir'), mkdir(outdir); end
@@ -857,4 +812,3 @@ if n == 0, f_floor = NaN; f_cap = NaN; return; end
 f_floor = nnz(gg <= flo + eps(class(G))) / n;
 f_cap   = nnz(gg >= cap - eps(class(G))) / n;
 end
-

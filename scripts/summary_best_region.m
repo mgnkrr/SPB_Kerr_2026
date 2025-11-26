@@ -1,5 +1,5 @@
 function S = summary_best_region(keep, best, varargin)
-% SUMMARY_BEST_REGION  CIs around the best G-mean region.
+% CIs around the best G-mean region.
 % Usage:
 %   L = load('figs_out/artifacts/mcmc_results_YYYYMMDD_HHMMSS.mat');
 %   S = summary_best_region(L.keep, L.best, 'mode','topfrac', 'top_frac',0.05);
@@ -39,7 +39,7 @@ assert(istable(keep) && ismember('Gmean', keep.Properties.VariableNames), ...
 assert(isfield(best,'gmean') && isfield(best,'params'), ...
     'best must contain fields gmean and params.');
 
-% identify parameter columns present
+% identify parameter columns
 param_cols = intersect({'mu','A','theta_deg','sigma'}, keep.Properties.VariableNames, 'stable');
 assert(~isempty(param_cols), 'No parameter columns (mu/A/theta_deg/sigma) found in keep.');
 
@@ -51,7 +51,6 @@ switch lower(opt.mode)
     case 'topfrac'
         thr = quantile(G, 1 - opt.top_frac);
         mask = (G >= thr);
-        % always include the single best draw (closest params to best.params)
         [~, ibest] = min(param_distance(keep, best.params, param_cols));
         mask(ibest) = true;
 
@@ -125,7 +124,7 @@ for c = string(param_cols)
     S.params.(c) = summarize_vec(Rgn.(c));
 end
 
-% ---------- optional: extra metrics you saved ----------
+% ---------- extra ----------
 if ismember('G_mu_grid', keep.Properties.VariableNames)
     S.G_mu_grid = summarize_vec(Rgn.G_mu_grid);
 end
@@ -178,29 +177,26 @@ for i = 1:numel(param_cols)
     P(:,i) = keep.(param_cols{i});
 end
 pbest = pbest(:)';
-if size(P,2) ~= numel(pbest)
-    % If best.params omits theta (or includes it), align by overlapping names
-    % Try to rebuild best param vector by column names
-    map = containers.Map({'mu','A','theta_deg','sigma'}, nan(1,4));
-    % naive fill from order of pbest if sizes match; else assume [mu A theta] ordering
+if size(P,2) ~= numel(pbest)   
+    
     if numel(pbest)==size(P,2)
         pb = pbest;
     else
-        % fallback: truncate or pad with NaN to match
+        
         pb = nan(1,size(P,2));
         nmin = min(numel(pbest), size(P,2));
         pb(1:nmin) = pbest(1:nmin);
     end
     pbest = pb;
 end
-% standardize columns for isotropic distance
+
 Pz = (P - mean(P,1,'omitnan')) ./ std(P,[],1,'omitnan');
 pz = (pbest - mean(P,1,'omitnan')) ./ std(P,[],1,'omitnan');
 d = sqrt(sum((Pz - pz).^2, 2));
 d(~isfinite(d)) = inf;
 end
 
-% ---------- helper: print vector nicely ----------
+% ---------- helper ---------
 function s = vecstr(v)
 s = sprintf('[%s]', strjoin(compose('%.3f', v(:).'), ', '));
 end
